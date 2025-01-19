@@ -1,0 +1,18 @@
+models/policy.py
+lines 26-28: maybe I should add reward input there.
+
+models/value.py
+lines 18-19: there is also something about RNN model init.
+
+CE input size
+update?
+
+
+
+
+changed source code files (in time order)
+
+utils/history_construct.py
+agent/Agent.py
+models/policy.py
+algorithm/sac.py

@@ -114,7 +114,7 @@ class EnvWorker:
                 self.policy.inference_init_hidden(1)
                 while True:
                     state_tensor = torch.from_numpy(state).to(torch.get_default_dtype()).unsqueeze(0)
-                    reward = 0
+                    reward = mem.memory[-1].reward
                     action_tensor = self.policy.inference_one_step(state_tensor, reward, deterministic)[0]
                     action = action_tensor.numpy()
                     self.before_apply_action(action)
@@ -335,7 +335,7 @@ class EnvRemoteArray:
             states = ray.get([worker.get_current_state.remote() for worker in self.workers])
         else:
             states = [worker.get_current_state() for worker in self.workers]
-        reward = 0
+        reward = torch.zeros(self.worker_num, 1).to(device)
 
         states = np.array(states)
         with torch.no_grad():

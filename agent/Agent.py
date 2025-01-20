@@ -371,13 +371,13 @@ class EnvRemoteArray:
         logs['TotalSteps'] = len(mem)
         return mem, logs
 
-    def get_action(self, state, cur_policy, random, device=torch.device("cpu")):
+    def get_action(self, state, cur_policy: Policy, reward, random, device=torch.device("cpu")):
         with torch.no_grad():
             if random:
                 action = self.env.normalization(self.action_space.sample())
             else:
                 action = cur_policy.inference_one_step(torch.from_numpy(state[None]).to(device=device,
-                                                                         dtype=torch.get_default_dtype()),
+                                                                         dtype=torch.get_default_dtype()), reward,
                                                        self.deterministic)[0].to(
                         torch.device('cpu')).numpy()
         return action
@@ -388,7 +388,8 @@ class EnvRemoteArray:
         cur_policy = policy
         worker = self.workers[0]
         state = worker.get_current_state()
-        action = self.get_action(state, cur_policy, random, device)
+        reward = torch.zeros(1, 1).to(device)
+        action = self.get_action(state, cur_policy, reward, random, device)
         if need_info:
             next_state, reward, done, _, task_ind, env_param, current_steps, info = worker.step(action, env_ind, render, need_info=True)
         else:

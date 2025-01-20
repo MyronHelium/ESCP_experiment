@@ -114,7 +114,8 @@ class EnvWorker:
                 self.policy.inference_init_hidden(1)
                 while True:
                     state_tensor = torch.from_numpy(state).to(torch.get_default_dtype()).unsqueeze(0)
-                    action_tensor = self.policy.inference_one_step(state_tensor, deterministic)[0]
+                    reward = 0
+                    action_tensor = self.policy.inference_one_step(state_tensor, reward, deterministic)[0]
                     action = action_tensor.numpy()
                     self.before_apply_action(action)
                     next_state, reward, done, _ = self.env.step(self.env.denormalization(action))
@@ -334,6 +335,7 @@ class EnvRemoteArray:
             states = ray.get([worker.get_current_state.remote() for worker in self.workers])
         else:
             states = [worker.get_current_state() for worker in self.workers]
+        reward = 0
 
         states = np.array(states)
         with torch.no_grad():
@@ -341,7 +343,7 @@ class EnvRemoteArray:
                 actions = [self.env.normalization(self.action_space.sample()) for item in states]
             else:
                 states_tensor = torch.from_numpy(states).to(torch.get_default_dtype()).to(device).unsqueeze(1)
-                actions = cur_policy.inference_one_step(states_tensor, self.deterministic).to(torch.device('cpu')).squeeze(1).numpy()
+                actions = cur_policy.inference_one_step(states_tensor, reward, self.deterministic).to(torch.device('cpu')).squeeze(1).numpy()
 
         if self.use_remote:
             srd = ray.get([worker.step.remote(action, env_ind) for action, worker in zip(actions, self.workers)])

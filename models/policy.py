@@ -24,8 +24,8 @@ class Policy(torch.nn.Module):
         aux_dim = ep_dim if enhance_ep else 0
         self.ep_dim = ep_dim
         self.up = RNNBase(obs_dim + ep_dim, act_dim * 2, up_hidden_size, up_activations, up_layer_type, logger, aux_dim)
-        self.ep = RNNBase(obs_dim + act_dim, ep_dim, ep_hidden_size, ep_activation, ep_layer_type, logger)
-        self.ep_temp = RNNBase(obs_dim + act_dim, ep_dim, ep_hidden_size, ep_activation, ep_layer_type, logger)
+        self.ep = RNNBase(obs_dim + act_dim + 1, ep_dim, ep_hidden_size, ep_activation, ep_layer_type, logger) # TODO: add reward dimension in input
+        self.ep_temp = RNNBase(obs_dim + act_dim + 1, ep_dim, ep_hidden_size, ep_activation, ep_layer_type, logger) # TODO: same as above
         self.ep_rnn_count = self.ep.rnn_num
         self.up_rnn_count = self.up.rnn_num
         # ep first, up second
@@ -93,11 +93,11 @@ class Policy(torch.nn.Module):
         # ep = ep / torch.clamp_min(ep.pow(2).mean(dim=-1, keepdim=True).sqrt(), 1e-5)
         return ep, h
 
-    def ep_h(self, h):
-        return h[:self.ep_rnn_count]
+    # def ep_h(self, h):
+    #     return h[:self.ep_rnn_count]
 
-    def up_h(self, h):
-        return h[self.ep_rnn_count:]
+    # def up_h(self, h):
+    #     return h[self.ep_rnn_count:]
 
     def make_init_state(self, batch_size, device):
         ep_h = self.ep.make_init_state(batch_size, device)
@@ -113,12 +113,12 @@ class Policy(torch.nn.Module):
         ep, ep_h_out = self.get_ep_temp(torch.cat((x, lst_a), -1), ep_h)
         return ep
 
-    def meta_forward(self, x, lst_a, h, require_full_output=False):
+    def meta_forward(self, x, lst_a, h, reward, require_full_output=False): # TODO: add reward
         ep_h = h[:self.ep_rnn_count]
         up_h = h[self.ep_rnn_count:]
         if not require_full_output:
             if not self.use_gt_env_feature:
-                ep, ep_h_out = self.get_ep(torch.cat((x, lst_a), -1), ep_h)
+                ep, ep_h_out = self.get_ep(torch.cat((x, lst_a, reward), -1), ep_h) # TODO
                 if self.bottle_neck and self.allow_sample:
                     ep = ep + torch.randn_like(ep) * self.bottle_sigma
                 if self.stop_pg_for_ep:
@@ -130,7 +130,7 @@ class Policy(torch.nn.Module):
                 ep_h_out = []
         else:
             if not self.use_gt_env_feature:
-                ep, ep_h_out, ep_full_hidden = self.get_ep(torch.cat((x, lst_a), -1), ep_h, require_full_output)
+                ep, ep_h_out, ep_full_hidden = self.get_ep(torch.cat((x, lst_a, reward), -1), ep_h, require_full_output) # TODO
                 if self.bottle_neck and self.allow_sample:
                     ep = ep + torch.randn_like(ep) * self.bottle_sigma
                 if self.stop_pg_for_ep:
@@ -146,8 +146,8 @@ class Policy(torch.nn.Module):
         h_out = ep_h_out + up_h_out
         return up, h_out
 
-    def forward(self, x, lst_a, h, require_log_std=False):
-        policy_out, h_out = self.meta_forward(x, lst_a, h)
+    def forward(self, x, lst_a, h, reward, require_log_std=False): # TODO: add reward
+        policy_out, h_out = self.meta_forward(x, lst_a, h, reward) # TODO
         mu, log_std = policy_out.chunk(2, dim=-1)
         log_std = torch.clamp(log_std, self.min_log_std, self.max_log_std)
         std = log_std.exp()
@@ -155,8 +155,8 @@ class Policy(torch.nn.Module):
             return mu, std, log_std, h_out
         return mu, std, h_out
 
-    def rsample(self, x, lst_a, h):
-        mu, std, log_std, h_out = self.forward(x, lst_a, h, require_log_std=True)
+    def rsample(self, x, lst_a, h, reward): # TODO: add reward
+        mu, std, log_std, h_out = self.forward(x, lst_a, h, reward, require_log_std=True) # TODO
         # sample = torch.randn_like(mu).detach() * std + mu
         noise = torch.randn_like(mu).detach() * std
         sample = noise + mu
@@ -212,9 +212,9 @@ class Policy(torch.nn.Module):
         else:
             return self.sample_hidden_state[0].shape[0] == batch_size
 
-    def inference_rnn_fix_one_action(self, state, lst_action):
+    def inference_rnn_fix_one_action(self, state, lst_action, reward):
         if self.use_gt_env_feature:
-            mu, std, act, logp, self.sample_hidden_state = self.rsample(state, lst_action, self.sample_hidden_state)
+            mu, std, act, logp, self.sample_hidden_state = self.rsample(state, lst_action, self.sample_hidden_state, reward)
             return mu, std, act, logp, self.sample_hidden_state
 
         while RNNBase.get_hidden_length(self.sample_hidden_state) >= self.rnn_fix_length:
@@ -232,23 +232,23 @@ class Policy(torch.nn.Module):
         # print('input: ', state[0])
         # lst_action = lst_action.repeat_interleave(length, dim=0)
         lst_action = torch.cat([lst_action] * length, dim=0)
-        mu, std, act, logp, self.sample_hidden_state = self.rsample(state, lst_action, self.sample_hidden_state)
+        mu, std, act, logp, self.sample_hidden_state = self.rsample(state, lst_action, self.sample_hidden_state, reward)
         # print('2: ', self.sample_hidden_state)
 
         return mu, std, act, logp, self.sample_hidden_state
 
-    def inference_one_step(self, state, deterministic=True):
+    def inference_one_step(self, state, reward, deterministic=True):
         self.set_deterministic_ep(deterministic)
         with torch.no_grad():
             lst_action = state[..., :self.act_dim]
             state = state[..., self.act_dim:]
             if self.rnn_fix_length is None or self.rnn_fix_length == 0 or len(self.sample_hidden_state) == 0:
-                mu, std, act, logp, self.sample_hidden_state = self.rsample(state, lst_action, self.sample_hidden_state)
+                mu, std, act, logp, self.sample_hidden_state = self.rsample(state, lst_action, self.sample_hidden_state, reward)
             else:
                 while RNNBase.get_hidden_length(self.sample_hidden_state) < self.rnn_fix_length - 1 and not self.use_gt_env_feature:
                     _, _, _, _, self.sample_hidden_state = self.inference_rnn_fix_one_action(torch.zeros_like(state),
-                                                                                     torch.zeros_like(lst_action))
-                mu, std, act, logp, self.sample_hidden_state = self.inference_rnn_fix_one_action(state, lst_action)
+                                                                                     torch.zeros_like(lst_action), reward)
+                mu, std, act, logp, self.sample_hidden_state = self.inference_rnn_fix_one_action(state, lst_action, reward)
                 mu, std, act, logp = map(lambda x: x[:1].reshape((1, -1)), [mu, std, act, logp])
                 # self.ep_tensor =
         if deterministic:
@@ -283,23 +283,23 @@ class Policy(torch.nn.Module):
         x = torch.cat(xs, dim=0)
         return x
 
-    def generate_hidden_state_with_slice(self, sliced_state: torch.Tensor, sliced_lst_action: torch.Tensor):
-        """
-        :param sliced_state: 0-dim: mini-trajectory index, 1-dim: batch_size, 2-dim: time step, 3-dim: feature index
-        :param sliced_lst_action:
-        :param slice_num:
-        :return:
-        """
-        with torch.no_grad():
-            mini_traj_num = sliced_state.shape[0]
-            batch_size = sliced_state.shape[1]
-            device = sliced_state.device
-            hidden_states = []
-            hidden_state_now = self.make_init_state(batch_size, device)
-            for i in range(mini_traj_num):
-                hidden_states.append(hidden_state_now)
-                _, hidden_state_now = self.meta_forward(sliced_state[i], sliced_lst_action[i], hidden_state_now)
-        return hidden_states
+    # def generate_hidden_state_with_slice(self, sliced_state: torch.Tensor, sliced_lst_action: torch.Tensor):
+    #     """
+    #     :param sliced_state: 0-dim: mini-trajectory index, 1-dim: batch_size, 2-dim: time step, 3-dim: feature index
+    #     :param sliced_lst_action:
+    #     :param slice_num:
+    #     :return:
+    #     """
+    #     with torch.no_grad():
+    #         mini_traj_num = sliced_state.shape[0]
+    #         batch_size = sliced_state.shape[1]
+    #         device = sliced_state.device
+    #         hidden_states = []
+    #         hidden_state_now = self.make_init_state(batch_size, device)
+    #         for i in range(mini_traj_num):
+    #             hidden_states.append(hidden_state_now)
+    #             _, hidden_state_now = self.meta_forward(sliced_state[i], sliced_lst_action[i], hidden_state_now)
+    #     return hidden_states
 
     @staticmethod
     def reshaping_hidden(full_hidden, init_hidden, slice_num, traj_len):
@@ -315,7 +315,7 @@ class Policy(torch.nn.Module):
             hidden_states_res.append(item.reshape((1, it_shape[0] * it_shape[1], it_shape[2])))
         return hidden_states_res
 
-    def generate_hidden_state(self, state: torch.Tensor, lst_action: torch.Tensor, slice_num, use_tmp_ep=False):
+    def generate_hidden_state(self, state: torch.Tensor, lst_action: torch.Tensor, slice_num, reward, use_tmp_ep=False):
         """
         :param sliced_state: 0-dim: mini-trajectory index, 1-dim: batch_size, 2-dim: time step, 3-dim: feature index
         :param sliced_lst_action:
@@ -328,7 +328,7 @@ class Policy(torch.nn.Module):
             hidden_states = []
             hidden_state_now = self.make_init_state(batch_size, device)
             if not use_tmp_ep:
-                _, _, full_hidden = self.meta_forward(state, lst_action, hidden_state_now, require_full_output=True)
+                _, _, full_hidden = self.meta_forward(state, lst_action, hidden_state_now, reward, require_full_output=True)
             else:
                 _, _, full_hidden = self.get_ep_temp(torch.cat((state, lst_action), -1), hidden_state_now,
                                                      require_full_output=True)
@@ -399,40 +399,40 @@ class Policy(torch.nn.Module):
             res_hidden.append(hidden_state[i].detach())
         return res_hidden
 
-    def _test_forward_time(self, device, num=1000, batch_size=1):
+    # def _test_forward_time(self, device, num=1000, batch_size=1):
 
-        h = self.make_init_state(batch_size, device)
-        start_time = time.time()
-        action_tensor = torch.randn((batch_size, 1, self.act_dim), device=device)
-        obs_tensor = torch.randn((batch_size, 1, self.obs_dim), device=device)
+    #     h = self.make_init_state(batch_size, device)
+    #     start_time = time.time()
+    #     action_tensor = torch.randn((batch_size, 1, self.act_dim), device=device)
+    #     obs_tensor = torch.randn((batch_size, 1, self.obs_dim), device=device)
 
-        for i in range(num):
-            self.forward(obs_tensor, action_tensor, h=h)
-        end_time = time.time()
-        print('pure forward time: {}, pure meta forward time: {}'.format(self.ep.cumulative_forward_time + self.up.cumulative_forward_time,
-                                                                         self.ep.cumulative_meta_forward_time + self.up.cumulative_meta_forward_time))
-        print('running for {} times, spending time is {:.2f}, batch size is {}, device: {}'.format(num, end_time - start_time, batch_size, device))
-        self.ep.cumulative_forward_time = 0
-        self.up.cumulative_forward_time = 0
-        self.ep.cumulative_meta_forward_time = 0
-        self.up.cumulative_meta_forward_time = 0
+    #     for i in range(num):
+    #         self.forward(obs_tensor, action_tensor, h=h)
+    #     end_time = time.time()
+    #     print('pure forward time: {}, pure meta forward time: {}'.format(self.ep.cumulative_forward_time + self.up.cumulative_forward_time,
+    #                                                                      self.ep.cumulative_meta_forward_time + self.up.cumulative_meta_forward_time))
+    #     print('running for {} times, spending time is {:.2f}, batch size is {}, device: {}'.format(num, end_time - start_time, batch_size, device))
+    #     self.ep.cumulative_forward_time = 0
+    #     self.up.cumulative_forward_time = 0
+    #     self.ep.cumulative_meta_forward_time = 0
+    #     self.up.cumulative_meta_forward_time = 0
 
-    def _test_inference_time(self, device, num=1000, batch_size=1):
-        if not self.inference_check_hidden(1):
-            self.inference_init_hidden(1, device)
-        # h = self.make_init_state(batch_size, device)
-        start_time = time.time()
-        obs_act = torch.randn((1, self.obs_dim+self.act_dim), device=device)
-        for i in range(num):
-            self.inference_one_step(obs_act)
-            # self.forward(torch.randn((batch_size, 1, self.obs_dim), device=device), torch.randn((batch_size, 1, self.act_dim), device=device), h=h)
-        end_time = time.time()
-        print('pure forward time: {}, pure meta forward time: {}'.format(
-            self.ep.cumulative_forward_time + self.up.cumulative_forward_time,
-            self.ep.cumulative_meta_forward_time + self.up.cumulative_meta_forward_time))
-        # print('pure forward time: {}'.format(self.ep.cumulative_forward_time + self.up.cumulative_forward_time))
-        print('running for {} times, spending time is {:.2f}, batch size is {}, device: {}'.format(num, end_time - start_time, batch_size, device))
-        self.ep.cumulative_forward_time = 0
-        self.up.cumulative_forward_time = 0
-        self.ep.cumulative_meta_forward_time = 0
-        self.up.cumulative_meta_forward_time = 0
+    # def _test_inference_time(self, device, num=1000, batch_size=1):
+    #     if not self.inference_check_hidden(1):
+    #         self.inference_init_hidden(1, device)
+    #     # h = self.make_init_state(batch_size, device)
+    #     start_time = time.time()
+    #     obs_act = torch.randn((1, self.obs_dim+self.act_dim), device=device)
+    #     for i in range(num):
+    #         self.inference_one_step(obs_act)
+    #         # self.forward(torch.randn((batch_size, 1, self.obs_dim), device=device), torch.randn((batch_size, 1, self.act_dim), device=device), h=h)
+    #     end_time = time.time()
+    #     print('pure forward time: {}, pure meta forward time: {}'.format(
+    #         self.ep.cumulative_forward_time + self.up.cumulative_forward_time,
+    #         self.ep.cumulative_meta_forward_time + self.up.cumulative_meta_forward_time))
+    #     # print('pure forward time: {}'.format(self.ep.cumulative_forward_time + self.up.cumulative_forward_time))
+    #     print('running for {} times, spending time is {:.2f}, batch size is {}, device: {}'.format(num, end_time - start_time, batch_size, device))
+    #     self.ep.cumulative_forward_time = 0
+    #     self.up.cumulative_forward_time = 0
+    #     self.ep.cumulative_meta_forward_time = 0
+    #     self.up.cumulative_meta_forward_time = 0

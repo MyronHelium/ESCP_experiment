@@ -169,7 +169,7 @@ class SAC:
 
     def sac_update(self, state, action, next_state, reward, mask, last_action, valid, task, env_param,
                    policy_hidden=None, value_hidden1=None, value_hidden2=None, transition_hidden=None,
-                   can_optimize_ep=True):
+                   can_optimize_ep=True): # TODO: add reward in update
         """reward, mask should be (-1, 1)"""
         alpha = self.log_sac_alpha.exp()
         if self.parameter.rnn_fix_length is None or self.parameter.rnn_fix_length == 0:
@@ -196,7 +196,7 @@ class SAC:
             else:
                 total_state = next_state
                 total_last_action = action
-            _, _, next_action_total, nextact_logprob, _ = self.policy.rsample(total_state, total_last_action, policy_hidden)
+            _, _, next_action_total, nextact_logprob, _ = self.policy.rsample(total_state, total_last_action, policy_hidden, reward)
             ep_total = self.policy.ep_tensor.detach() if self.parameter.stop_pg_for_ep else None
             if self.parameter.stop_pg_for_ep and self.rmdm_loss.history_env_mean is not None:
                 ind_ = torch.abs(task[..., -1, 0]-1).to(dtype=torch.int64)
@@ -226,7 +226,7 @@ class SAC:
                 target_Q = (reward[..., -1:, :] + (mask[..., -1:, :] * self.parameter.gamma * target_v)).detach()
         self.timer.register_end(level=3)
         self.timer.register_point('current_Q', level=3)     # (TIME: 0.006)
-        _, _, action_rsample, logprob, _ = self.policy.rsample(state, last_action, policy_hidden)
+        _, _, action_rsample, logprob, _ = self.policy.rsample(state, last_action, policy_hidden, reward)
         ep = self.policy.ep_tensor
         ep_current = self.policy.ep_tensor.detach() if self.parameter.stop_pg_for_ep else None
         if self.parameter.stop_pg_for_ep and self.rmdm_loss.history_env_mean is not None:
@@ -439,7 +439,7 @@ class SAC:
                 if self.parameter.rnn_fix_length is None or self.parameter.rnn_fix_length == 0:
                     self.timer.register_point('generate_hidden_state', level=4)
                     hidden_policy = self.policy.generate_hidden_state(states, last_action,
-                                                                      slice_num=self.parameter.rnn_slice_num)
+                                                                      slice_num=self.parameter.rnn_slice_num, reward=rewards)
                     hidden_value1 = self.value1.generate_hidden_state(states, last_action, actions,
                                                                       slice_num=self.parameter.rnn_slice_num)
                     hidden_value2 = self.value2.generate_hidden_state(states, last_action, actions,
@@ -577,6 +577,7 @@ class SAC:
         else:
             self.target_value1.copy_weight_from(self.value1, self.tau)
             self.target_value2.copy_weight_from(self.value2, self.tau)
+
     def run(self):
         total_steps = 0
         if self.replay_buffer.size < self.parameter.start_train_num:
@@ -585,8 +586,8 @@ class SAC:
             while self.replay_buffer.size <= self.parameter.start_train_num:
                 mem, log = self.training_agent.sample1step(self.policy,
                                                            self.replay_buffer.size < self.parameter.random_num,
-                                                           device=torch.device('cpu'))
-                self.replay_buffer.mem_push(mem)
+                                                           device=torch.device('cpu')) # mem contains reward, element #4
+                self.replay_buffer.mem_push(mem) # add one-step mem to the replay buffer
                 total_steps += 1
             self.logger("init done!!!")
         for iter in range(self.parameter.max_iter_num):

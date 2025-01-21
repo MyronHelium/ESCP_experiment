@@ -335,7 +335,7 @@ class EnvRemoteArray:
             states = ray.get([worker.get_current_state.remote() for worker in self.workers])
         else:
             states = [worker.get_current_state() for worker in self.workers]
-        rewards = torch.zeros(self.worker_num).to(device)
+        rewards = torch.zeros((1, 1, self.worker_num)).to(device)
 
         states = np.array(states)
         with torch.no_grad():
@@ -388,7 +388,7 @@ class EnvRemoteArray:
         cur_policy = policy
         worker = self.workers[0]
         state = worker.get_current_state()
-        reward = torch.zeros(1).to(device)
+        reward = torch.zeros((1, 1, 1)).to(device)
         action = self.get_action(state, cur_policy, reward, random, device)
         if need_info:
             next_state, reward, done, _, task_ind, env_param, current_steps, info = worker.step(action, env_ind, render, need_info=True)

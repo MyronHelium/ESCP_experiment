@@ -378,7 +378,7 @@ class EnvRemoteArray:
                 action = self.env.normalization(self.action_space.sample())
             else:
                 action = cur_policy.inference_one_step(torch.from_numpy(state[None]).to(device=device, dtype=torch.get_default_dtype()),
-                                                       torch.from_numpy(reward[None]).to(device=device, dtype=torch.get_default_dtype()),
+                                                       reward[0],
                                                        self.deterministic)[0].to(torch.device('cpu')).numpy()
         return action
 

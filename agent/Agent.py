@@ -324,7 +324,7 @@ class EnvRemoteArray:
         logs['TotalSteps'] = len(mem)
         return mem, logs
 
-    def sample1step(self, policy=None, random=False, device=torch.device('cpu'), env_ind=None):
+    def sample1step(self, policy: Policy=None, random: bool=False, device: torch.device=torch.device('cpu'), env_ind: int=None):
         assert not (policy is None and self.policy is None)
         cur_policy = policy if policy is not None else self.policy
         if (not self.use_remote) and self.worker_num == 1:
@@ -343,7 +343,7 @@ class EnvRemoteArray:
             else:
                 states_tensor = torch.from_numpy(states).to(torch.get_default_dtype()).to(device).unsqueeze(1)
                 rewards = torch.zeros((states_tensor.shape[0], 1, self.worker_num)).to(device)
-                print("sample1env")
+                print("sample1step")
                 actions = cur_policy.inference_one_step(states_tensor, rewards, self.deterministic).to(torch.device('cpu')).squeeze(1).numpy()
 
         if self.use_remote:
@@ -377,10 +377,9 @@ class EnvRemoteArray:
             if random:
                 action = self.env.normalization(self.action_space.sample())
             else:
-                action = cur_policy.inference_one_step(torch.from_numpy(state[None]).to(device=device,
-                                                                         dtype=torch.get_default_dtype()), reward,
-                                                       self.deterministic)[0].to(
-                        torch.device('cpu')).numpy()
+                action = cur_policy.inference_one_step(torch.from_numpy(state[None]).to(device=device, dtype=torch.get_default_dtype()),
+                                                       torch.from_numpy(reward[None]).to(device=device, dtype=torch.get_default_dtype()),
+                                                       self.deterministic)[0].to(torch.device('cpu')).numpy()
         return action
 
     def sample1step1env(self, policy, random=False, device=torch.device('cpu'), env_ind=None, render=False, need_info=False):

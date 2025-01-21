@@ -118,6 +118,7 @@ class Policy(torch.nn.Module):
         up_h = h[self.ep_rnn_count:]
         if not require_full_output:
             if not self.use_gt_env_feature:
+                print(x.shape(), lst_a.shape(), reward.shape())
                 ep, ep_h_out = self.get_ep(torch.cat((x, lst_a, reward), -1), ep_h) # TODO
                 if self.bottle_neck and self.allow_sample:
                     ep = ep + torch.randn_like(ep) * self.bottle_sigma
